@@ -1,9 +1,16 @@
+using System.Text;
 using System.Text.Json.Serialization;
-using AutoMapper;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using work_10.Authorization;
 using work_10.Data;
 using work_10.Repositories;
 using work_10.Services;
+
 namespace work_10
 {
     public class Program
@@ -12,9 +19,9 @@ namespace work_10
         {
             var builder = WebApplication.CreateBuilder(args);
 
+ 
             builder.Services.AddDbContext<ComputerShopContext>(options =>
-                options.UseSqlServer(
-                    builder.Configuration.GetConnectionString("DefaultConnection")));
+                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
             builder.Services.AddAutoMapper(typeof(Program).Assembly);
 
@@ -33,6 +40,78 @@ namespace work_10
             builder.Services.AddScoped<IOrderService, OrderService>();
             builder.Services.AddScoped<IOrderItemService, OrderItemService>();
 
+
+            builder.Services.AddScoped<ITokenService, TokenService>();
+            builder.Services.AddScoped<IAuthService, AuthService>();
+            builder.Services.AddHttpContextAccessor();
+
+
+            var jwtSettings = builder.Configuration.GetSection("Jwt");
+            var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
+
+            builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = jwtSettings["Issuer"],
+                    ValidAudience = jwtSettings["Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ClockSkew = TimeSpan.Zero
+                };
+            });
+
+
+            builder.Services.AddAuthorization(options =>
+            {
+                options.AddPolicy(Policies.AdminOnly, policy => policy.RequireRole("1"));
+
+                options.AddPolicy(Policies.SameUserOrAdmin, policy =>
+                    policy.Requirements.Add(new SameUserOrAdminRequirement()));
+            });
+
+            builder.Services.AddSingleton<IAuthorizationHandler, SameUserOrAdminHandler>();
+
+
+            var allowedOrigins = builder.Configuration
+                .GetSection("Cors:AllowedOrigins")
+                .Get<string[]>() ?? Array.Empty<string>();
+
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy("FrontendPolicy", policy =>
+                {
+                    policy.WithOrigins(allowedOrigins)
+                          .AllowAnyMethod()
+                          .AllowAnyHeader();
+                });
+            });
+
+
+            builder.Services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+                options.AddPolicy("LoginLimiter", httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0                        
+                        }));
+            });
+
+
             builder.Services.AddControllers()
                 .AddJsonOptions(options =>
                 {
@@ -40,9 +119,24 @@ namespace work_10
                 });
 
             builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen();
+
+            builder.Services.AddSwaggerGen(options =>
+            {
+                options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                {
+                    Name = "Authorization",
+                    Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+                    Scheme = "Bearer",
+                    BearerFormat = "JWT",
+                    In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+                    Description = "¬ведите JWT токен (без слова Bearer)."
+                });
+
+                options.OperationFilter<work_10.Swagger.SecurityRequirementsOperationFilter>();
+            });
 
             var app = builder.Build();
+
 
             if (app.Environment.IsDevelopment())
             {
@@ -51,8 +145,16 @@ namespace work_10
             }
 
             app.UseHttpsRedirection();
+
+            app.UseCors("FrontendPolicy");
+
+            app.UseRateLimiter();
+
+            app.UseAuthentication();
             app.UseAuthorization();
+
             app.MapControllers();
+
             app.Run();
         }
     }

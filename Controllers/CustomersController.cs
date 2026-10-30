@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using work_10.Authorization;
 using work_10.Dtos.Customer;
 using work_10.Services;
 
@@ -55,6 +57,7 @@ namespace work_10.Controllers
         }
 
         [HttpPut("{id:int}")]
+        [Authorize(Policy = Policies.SameUserOrAdmin)]
         public async Task<ActionResult<CustomerDto>> Update(
             int id,
             [FromBody] UpdateCustomerDto dto,
@@ -75,6 +78,7 @@ namespace work_10.Controllers
         }
 
         [HttpPatch("{id:int}")]
+        [Authorize(Policy = Policies.SameUserOrAdmin)]
         public async Task<ActionResult<CustomerDto>> Patch(
             int id,
             [FromBody] PatchCustomerDto dto,
@@ -95,6 +99,7 @@ namespace work_10.Controllers
         }
 
         [HttpDelete("{id:int}")]
+        [Authorize(Policy = Policies.SameUserOrAdmin)]
         public async Task<IActionResult> Delete(int id, CancellationToken ct = default)
         {
             var deleted = await _service.DeleteAsync(id, ct);

@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using work_10.Authorization;
 using work_10.Dtos.Product;
 using work_10.Dtos.StockReservation;
 using work_10.Services;
@@ -44,6 +46,7 @@ namespace work_10.Controllers
         }
 
         [HttpPost]
+        [Authorize(Policy = Policies.AdminOnly)]
         public async Task<ActionResult<ProductDto>> Create(
             [FromBody] CreateProductDto dto,
             CancellationToken ct = default)
